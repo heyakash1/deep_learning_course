@@ -20,7 +20,7 @@ def arity(truth_table: tuple) -> int:
 
 def find_threshold(truth_table: tuple, n: int) -> list:
     ans = []
-    for b in range(0,n+1):
+    for b in range(0,n+2):
         flag = False
         for _ in truth_table:
             if MPNeuron(b=b).predict(_[0]) != _[1]:

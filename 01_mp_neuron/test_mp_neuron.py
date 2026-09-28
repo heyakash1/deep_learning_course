@@ -46,6 +46,13 @@ def test_threshold_true():
     expected = [0]
     assert result == expected, f"expected {expected}, got {result}"
 
+def test_threshold_false():
+    n = mp.arity(bf.functions["FALSE"])
+    result = mp.find_threshold(bf.functions["FALSE"],n)
+
+    expected = [3]
+    assert result == expected, f"expected {expected}, got {result}"
+
 
 if __name__ == "__main__":
     test_predict_and()
@@ -54,4 +61,5 @@ if __name__ == "__main__":
     test_threshold_xor_fails()
     test_threshold_nand_fails()
     test_threshold_true()
+    test_threshold_false()
     print("All tests passed.")
