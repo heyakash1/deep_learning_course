@@ -4,22 +4,21 @@ class MPNeuron:
         self.threshold = b
 
     def predict(self, x: tuple) -> int:
-        """
-        """
+
         aggregation = sum(x)
         if aggregation >= self.threshold :
-                return 1
-        else :  return 0
+                return True
+        else :  return False
 
 
 if __name__ == "__main__":
     print(MPNeuron(b=2).predict((1,1)))
     print(MPNeuron(b=2).predict((1,0)))
 
-def find_threshold(truth_table: tuple, n: int) -> list:
-    """
-    """
+def arity(truth_table: tuple) -> int:
+    return len(truth_table[0][0])
 
+def find_threshold(truth_table: tuple, n: int) -> list:
     ans = []
     for b in range(0,n+1):
         flag = False
