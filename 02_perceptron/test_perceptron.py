@@ -18,10 +18,21 @@ def test_seed_is_reproducible():
     assert np.array_equal(p1.w,p2.w), f"SEED is not reproducible"
 
 def test_separable_functions_converge():
-    pass
+    that_converge = {k:v for k,v in bf.functions.items() if k not in ("XOR","XNOR")}
+    for name, truth_table in that_converge.items():
+        p = Perceptron(arity(truth_table))
+
+        converged, epochs = p.fit(truth_table)
+        assert converged, f"{name} did not converge"
+
 
 def test_non_separable_functions_do_not_converge():
-    pass
+    that_dont_converge = {key:bf.functions[key] for key in ("XOR","XNOR") if key in bf.functions}
+    for name, truth_table in that_dont_converge.items():
+        p = Perceptron(arity(truth_table))
+
+        converged, epochs = p.fit(truth_table)
+        assert not converged, f"{name} converged"
 
 if __name__ == "__main__":
     test_predict_and()
