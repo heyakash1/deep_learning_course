@@ -34,6 +34,6 @@ class Perceptron:
             return (False, max_epochs)
         return (True,epochs+1)
 
-
-p = Perceptron(2)
-print(p.fit(bf.functions["XOR"]))
+if __name__ == "__main__":
+    p = Perceptron(2)
+    print(p.fit(bf.functions["XOR"]))
