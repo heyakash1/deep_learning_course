@@ -1,26 +1,49 @@
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
+import torch.nn as nn
+import torch.optim as optim
+import torch
+from data import get_loaders, IMAGE_SIZE
 import model
 
-IMAGE_SIZE = 20
 
-transform = transforms.Compose([
-    transforms.Resize((IMAGE_SIZE,IMAGE_SIZE)),
-    transforms.Grayscale(num_output_channels=1),
-    # convert to tensor
-    transforms.ToTensor()
-])
+def train(net, train_loader, epochs: int = 20, lr: float = 0.02) -> list:
+    """
+    Trains model and returns a list with the average loss of each epoch.
+    """
+    criterion = nn.CrossEntropyLoss()       # the loss function (cross-entropy)
+    optimizer = optim.SGD(net.parameters(), lr = lr)      # plain gradient descent over net.parameters()
+    epoch_losses = []
 
-train_data = datasets.ImageFolder("data/train", transform=transform)
-test_data = datasets.ImageFolder("data/test", transform=transform)
+    for epoch in range(epochs):
+        running_loss = 0.0
+        for images, labels in train_loader:
+            # 1. zero the gradients
+            optimizer.zero_grad()
 
-train_loader = DataLoader(train_data,batch_size=32, shuffle=True)
-test_loader = DataLoader(test_data, batch_size=32)
+            # 2. forward pass
+            outputs = net(images)
+
+            # 3. compute the loss
+            loss = criterion(outputs,labels)
+
+            # 4. backward pass
+            loss.backward()
+
+            # 5. optimizer step
+            optimizer.step()
+
+            # add this batch's loss to running_loss (.item() turns a scalar tensor into a float)
+            running_loss += loss.item()
+
+        # average loss for the epoch: append to epoch_loss and print it
+        avg_loss = running_loss / len(train_loader)
+        epoch_losses.append(avg_loss)
+        print(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.4f}")
+
+    return epoch_losses
 
 if __name__ == "__main__":
-    images, labels = next(iter(train_loader))
-    print(images.shape, labels.shape, train_data.classes)
-    m = model.FruitNetwork(input_size=400,num_classes=10)
-    outputs = m(images)
-
-    print("Output shape: ", outputs.shape)
+    torch.manual_seed(20)
+    train_loader, test_loader, classes = get_loaders()
+    m = model.FruitNetwork(IMAGE_SIZE*IMAGE_SIZE, len(classes))
+    losses = train(m,train_loader)
+    print(losses)
