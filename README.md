@@ -1,6 +1,6 @@
 # Deep Learning (452)
 
-**Name:** Akashdeep Singh
+**Name:** Akashdeep Singh  
 **Roll No:** 23BCS013
 
 Implementations of everything taught in the Deep Learning course, written in Python. Each topic lives in its own numbered folder with its own README, tests and a git tag, so the repo reads as a log of the course.
