@@ -12,8 +12,9 @@ Personal reference notes for `04_fruit_network`. They explain what each part of 
 6. [Training and backpropagation](#6-training-and-backpropagation-trainpy)
 7. [Seeing backprop happen](#7-seeing-backprop-happen-demo_gradientspy)
 8. [Experiments: normalization and learning rate](#8-experiments-normalization-and-learning-rate)
-9. [Mistakes I hit along the way](#9-mistakes-i-hit-along-the-way)
-10. [What comes next](#10-what-comes-next)
+9. [Evaluation, checkpoints and tests](#9-evaluation-checkpoints-and-tests)
+10. [Mistakes I hit along the way](#10-mistakes-i-hit-along-the-way)
+11. [What comes next](#11-what-comes-next)
 
 ---
 
@@ -71,6 +72,10 @@ Image files go in, class scores come out, and then the training loop uses those 
 | **Seed** | A fixed starting point for the random number generator, so a run can be repeated exactly. |
 | **Gradient norm** | One number summarizing how large a layer's gradients are: the square root of the sum of squares of all its gradient entries. |
 | **Dead ReLU** | A hidden neuron whose output is 0 for every input in a batch. It passes no gradient back, so its incoming weights don't change that step. |
+| **Test set** | Images the network never trained on, used only to measure how well it handles new data. |
+| **Accuracy** | The fraction of images whose predicted class matches the true class. |
+| **Overfitting** | Doing much better on the training images than on new ones, because the network has memorized details of the training set. |
+| **Checkpoint** | A saved file holding the trained weights, plus the settings needed to use them. |
 | **`nn.Module`** | PyTorch's base class for anything with learnable parameters. |
 
 ### Why batches?
@@ -118,6 +123,8 @@ transform = transforms.Compose([
 | `Grayscale(1)` | 3 colour channels become 1, which shrinks the input and drops colour information this exercise doesn't need. |
 | `ToTensor()` | Converts the image (a PIL object) into a tensor and rescales pixels from integers 0–255 to floats 0.0–1.0. |
 | `Normalize((0.5,), (0.5,))` | Computes `(pixel - 0.5) / 0.5`, which maps [0, 1] to [-1, 1]. The values are 1-tuples because there is one channel. |
+
+**The `normalize` flag.** `get_loaders(normalize=True)` builds the steps in a plain Python list, appends `Normalize` only when the flag is on, and then wraps the list in `transforms.Compose(steps)`. `ImageFolder` needs the *composed* transform, because a bare list can't be called on an image. The default `True` keeps `train.py`, the demo and the evaluation on the normalized pipeline, and `experiments.py` can switch it off to compare.
 
 ### 3.2 `ImageFolder`
 
@@ -548,9 +555,135 @@ Four runs of 20 epochs, changing one setting at a time:
 - **One run per setting.** This is suggestive, not proof. A different seed could place the bumps differently.
 - **Choose settings from training behaviour,** then use the test set once at the end. Tuning on test accuracy would leak the test set into the choices.
 
+### How the runs are produced (`experiments.py`)
+
+```python
+CONFIGS = [
+    {"normalize": False, "lr": 0.01},
+    {"normalize": False, "lr": 0.05},
+    {"normalize": True, "lr": 0.01},
+    {"normalize": True, "lr": 0.05},
+]
+
+
+def run_experiment(normalize, lr, epochs=20):
+    torch.manual_seed(SEED)
+    train_loader, _, classes = get_loaders(normalize=normalize)
+    net = model.FruitNetwork(IMAGE_SIZE * IMAGE_SIZE, len(classes))
+    return train(net, train_loader, epochs=epochs, lr=lr)
+```
+
+- **A list of dicts keeps the settings as data.** Adding a fifth experiment is one new line, with no new code.
+- **`torch.manual_seed(SEED)` runs inside the function,** before anything random. Every run therefore starts from the same initial weights and sees the same shuffle order, so the runs differ only in the settings being compared. Seeding once at the top of the file would give each run a different starting point, because the random number generator would have moved on.
+- **The order is seed, loaders, network, train.** That is the same order as the earlier standalone runs, so the three runs that had a fixed seed should reproduce their earlier numbers.
+- **`get_loaders(normalize=normalize)`** is a keyword argument that switches `transforms.Normalize` on or off. `data.py` has to accept it and build its list of transforms conditionally.
+- **`from train import train` is safe.** `train.py` only trains under `if __name__ == "__main__":`, so importing it runs nothing.
+- **Results are stored in a dict with readable keys** such as `"norm=True, lr=0.05"`. `json.dump(results, f, indent=4)` writes it to `experiments.json`: JSON stores dicts and lists of numbers as plain text, and `indent=4` makes the file readable. `json.load` reads it back into the same dict.
+- **`with open("experiments.json", "w") as f:`** closes the file automatically, even if an error happens inside the block.
+- **Dicts keep insertion order,** so the curves come back in the order they were run.
+- **`print_summary(results)`** prints the results as a Markdown table (loss at the first epoch, at the last epoch, and the lowest loss with its epoch), so it can be pasted straight into the README. `losses.index(lowest) + 1` gives the epoch of the lowest loss: the list index starts at 0 and epochs count from 1.
+- Run it from inside `04_fruit_network`, because the file is created in the current folder.
+
+### Plotting them (`plot_losses.py`)
+
+```python
+fig, (linear_ax, log_ax) = plt.subplots(1, 2, figsize=(14, 5))
+for label, losses in results.items():
+    epochs = range(1, len(losses) + 1)
+    for ax in (linear_ax, log_ax):
+        ax.plot(epochs, losses, label=label, marker="o", markersize=3)
+log_ax.set_yscale("log")
+fig.legend(handles, labels, loc="lower center", ncol=len(labels), bbox_to_anchor=(0.5, -0.04))
+fig.savefig(out_path, dpi=150, bbox_inches="tight")
+```
+
+- `plt.subplots(1, 2, figsize=(14, 5))` creates one figure with two side-by-side panels and returns the figure and both panels (called axes). Working with `fig` and `ax` objects is clearer than the `plt.` shortcuts once there is more than one panel.
+- `range(1, len(losses) + 1)` numbers the epochs from 1. The list index starts at 0, so the x values have to be built separately.
+- Each run is drawn on **both** panels. The linear panel shows the early drop. On a linear axis the late epochs would be squashed against the bottom, so the log panel (`set_yscale("log")`) gives equal ratios equal space, and the late-stage bumps stay visible.
+- `ax.grid(True, which="both", linestyle="--", alpha=0.5)` draws dashed, half-transparent gridlines. `which="both"` includes the minor gridlines, which matter on a log axis.
+- `MaxNLocator(integer=True)` keeps the x axis to whole epochs. Without it matplotlib picks ticks like 2.5 and 7.5.
+- **One shared legend under both panels.** `linear_ax.get_legend_handles_labels()` returns the lines and their labels, and `fig.legend(...)` places them below the panels, so the legend never covers a curve.
+- `fig.savefig(out_path, dpi=150, bbox_inches="tight")`: `dpi` is the resolution, and `tight` trims the margins while keeping the legend that sits outside the panels.
+- **Save before show.** `show()` blocks until the window is closed, and once it closes the figure is gone, so a save after it writes a blank image.
+- `show` is a parameter that defaults to `False`, so the function only opens a window when asked. `plt.close(fig)` at the end frees the figure's memory, which matters in loops and on machines with no display.
+- It needs matplotlib: `pip install matplotlib`, and add it to `requirements.txt`.
+
 ---
 
-## 9. Mistakes I hit along the way
+## 9. Evaluation, checkpoints and tests
+
+### 9.1 Why a separate test set
+
+- **Training loss only measures fit to images the network has already seen.** A very low loss can mean it learned the task, or that it memorized the training images.
+- **Test accuracy is measured on images it never trained on,** so it is an honest estimate of how it handles new data.
+- **Test-set discipline:** choose the settings (normalization, learning rate) from the *training* curves, then run the test set once. If you pick the setting with the best test accuracy, the test set has leaked into your choices.
+- **Compare train and test accuracy.** A large gap means overfitting.
+- **A caveat about this dataset:** the Fruits-360 photos come from fruit being rotated, so many images look nearly identical. Test images can therefore resemble training images closely, and a high test accuracy may overstate how well the network would do on fruit photographed differently.
+
+### 9.2 Saving and loading the weights (checkpoint)
+
+```python
+torch.save({
+    "state_dict": net.state_dict(),
+    "classes": classes,
+    "normalize": normalize,
+    "image_size": IMAGE_SIZE,
+}, path)
+```
+
+- `net.state_dict()` is a dictionary from parameter names (`fc1.weight`, `fc1.bias`, ...) to tensors. It holds only the numbers, not the architecture.
+- The checkpoint also stores the **settings** the weights depend on: the class names, whether the inputs were normalized, and the image size. Evaluation must preprocess images exactly as training did, and a mismatch (for example, training on normalized pixels and testing on raw ones) silently lowers the accuracy.
+- **Loading:** build the same architecture first (`FruitNetwork(...)`), then call `net.load_state_dict(checkpoint["state_dict"])`.
+- `torch.load(path, weights_only=True)` only loads plain data (tensors, dictionaries, lists, numbers, strings) and refuses arbitrary Python objects. That is safer, and it is the default in recent PyTorch.
+- `load_network` raises a clear `ValueError` if the saved image size differs from `data.py`, and `evaluate.py` does the same if the class lists differ.
+- The file is tiny (4340 numbers), so committing it is fine. Anyone can run `evaluate.py` without retraining.
+
+### 9.3 `evaluate()` piece by piece
+
+```python
+net.eval()
+with torch.no_grad():
+    for images, labels in loader:
+        predictions = net(images).argmax(dim=1)
+        for label, prediction in zip(labels.tolist(), predictions.tolist()):
+            total[label] += 1
+            if prediction == label:
+                correct[label] += 1
+            else:
+                confusions[(classes[label], classes[prediction])] += 1
+```
+
+- `net.eval()` switches the network to inference mode. It makes no difference here, because there is no dropout or batch norm, but it is the right habit. `net.train()` switches back.
+- `torch.no_grad()` turns off gradient recording, since nothing is being trained.
+- **`argmax(dim=1)`** returns, for each image, the index of its largest logit. That index is the predicted class. Softmax isn't needed, because it never changes which score is largest.
+- `.tolist()` turns a tensor into a plain Python list, so it can be looped over with `zip`.
+- `Counter` is a dictionary that returns 0 for a missing key, so `total[label] += 1` works the first time a class appears.
+- **Accuracy** is `sum(correct) / sum(total)`, and **per-class accuracy** is `correct[i] / total[i]` for each class.
+- **Confusions** record each mistake as a `(true class, predicted class)` pair. The most common ones show which fruits the network mixes up.
+- `loader.dataset.targets` is the list of labels that `ImageFolder` stores for every image. `count_images` counts it, which gives the number of images per class for the README table.
+- `f"{x:.1%}"` formats a fraction as a percentage with one decimal. The script prints a ready-to-paste Markdown table and saves `evaluation.json`.
+
+### 9.4 `train.py` as a script
+
+The final settings sit in constants at the top (`SEED`, `NORMALIZE`, `EPOCHS`, `LR`, `CHECKPOINT`), so they are in one place. Run as a script it seeds, builds the loaders, trains, and saves the checkpoint. The settings were chosen from the training-loss curves in section 8, not from test accuracy.
+
+### 9.5 Tests (`test_model.py`)
+
+- **Fake data, no dataset.** `torch.randn` makes random images and `torch.randint` makes random labels, with a seeded `torch.Generator`, so the tests are fast and reproducible on any machine.
+- **A list can stand in for a loader.** `train` only loops over its loader and calls `len()` on it, so `[(images, labels)]` works as a loader with one batch.
+
+| Test | What it checks |
+|------|----------------|
+| `test_output_shape` | A batch of 32 images gives an output of shape `(32, 10)`. |
+| `test_one_step_changes_weights` | A gradient reaches `fc1` (the layer furthest from the loss), and one optimizer step changes its weights. |
+| `test_loss_decreases` | Training repeatedly on one fixed batch lowers the loss. A network this size can overfit a single batch. |
+| `test_evaluate_counts_correct_predictions` | `evaluate` reports accuracy 1.0 when the labels equal the predictions and 0.0 when every label is shifted, and records every mistake as a confusion. |
+
+- **Testing both extremes** means the evaluate test can fail in either direction, as every test here should.
+
+---
+
+## 10. Mistakes I hit along the way
 
 | Mistake | What goes wrong | Fix |
 |---------|-----------------|-----|
@@ -568,12 +701,15 @@ Four runs of 20 epochs, changing one setting at a time:
 | Calling `train(...)` twice | Trains the network a second time and prints the wrong list. | Keep `losses = train(...)` and print `losses`. |
 | `model.Net()` | The class is `FruitNetwork`, so a wrong name raises `AttributeError`, and leaving out its two size arguments raises `TypeError`. | Use the real class name and pass `input_size` and `num_classes`. |
 | Reading `.grad` from an indexed parameter, as in `net.fc4.weight[0, 0].grad` | Indexing makes a new tensor, and gradients live on the parameter itself, so the result is `None`. | Index the gradient instead: `net.fc4.weight.grad[0, 0]`. |
+| Passing `normalize=` to `get_loaders` before adding that parameter | `TypeError: got an unexpected keyword argument`. | Add `normalize: bool = True` to `get_loaders` and build the list of transforms conditionally. |
+| Calling `plt.savefig` after `plt.show()` | The figure is gone once the window closes, so the saved image is blank. | Save first, then show. |
+| Passing a plain list of transforms to `ImageFolder` | `TypeError: 'list' object is not callable` when the first batch is loaded. | Wrap the list: `transforms.Compose(steps)`. |
+| Evaluating with different preprocessing than the training used | Accuracy drops silently, with no error. | Save `normalize` in the checkpoint and read it back. |
 
 ---
 
-## 10. What comes next
+## 11. What comes next
 
-- **Record the demo output:** run `demo_gradients.py` and paste its printout into section 7 here and into the README's Results section.
-- **Loss curve plot:** matplotlib figure of the epoch losses, ideally with all four experiment runs overlaid.
-- **Evaluation:** accuracy on the held-out test images, with the network in eval mode and gradients turned off.
-- **Loss surface plot (optional):** save the weights each epoch, project them to 2D with PCA, and draw the loss landscape with the training path on top.
+- **Run everything and paste the results** into the topic README: `train.py` (saves the weights), `evaluate.py` (accuracy and the per-class table), `experiments.py` and `plot_losses.py` (the table and the figure), and `test_model.py`.
+- **Optional: the loss surface.** Save the weights after every epoch, project them to 2D with PCA, compute the loss on a grid in that plane, and draw the training path on top.
+- **Optional experiments:** more epochs, or a learning rate between 0.01 and 0.05.
