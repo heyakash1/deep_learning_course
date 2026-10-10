@@ -1,0 +1,40 @@
+{
+    "train_accuracy": 1.0,
+    "test_accuracy": 0.9138888888888889,
+    "test_per_class": {
+        "Apple 10": 1.0,
+        "Avocado 1": 0.6853146853146853,
+        "Banana 1": 0.8855421686746988,
+        "Blackberry 1": 1.0,
+        "Cabbage red 1": 1.0,
+        "Carrot 1": 1.0,
+        "Pear 1": 1.0,
+        "Pineapple 1": 0.9939759036144579,
+        "Pomegranate 1": 0.8780487804878049,
+        "Watermelon 1": 0.7515923566878981
+    },
+    "train_images": {
+        "Apple 10": 699,
+        "Avocado 1": 427,
+        "Banana 1": 490,
+        "Blackberry 1": 450,
+        "Cabbage red 1": 149,
+        "Carrot 1": 151,
+        "Pear 1": 492,
+        "Pineapple 1": 490,
+        "Pomegranate 1": 492,
+        "Watermelon 1": 475
+    },
+    "test_images": {
+        "Apple 10": 231,
+        "Avocado 1": 143,
+        "Banana 1": 166,
+        "Blackberry 1": 150,
+        "Cabbage red 1": 49,
+        "Carrot 1": 50,
+        "Pear 1": 164,
+        "Pineapple 1": 166,
+        "Pomegranate 1": 164,
+        "Watermelon 1": 157
+    }
+}
