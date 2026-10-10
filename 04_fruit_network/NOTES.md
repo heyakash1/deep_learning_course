@@ -10,9 +10,10 @@ Personal reference notes for `04_fruit_network`. They explain what each part of 
 4. [The model](#4-the-model-modelpy)
 5. [Shape trace](#5-shape-trace)
 6. [Training and backpropagation](#6-training-and-backpropagation-trainpy)
-7. [Experiments: normalization and learning rate](#7-experiments-normalization-and-learning-rate)
-8. [Mistakes I hit along the way](#8-mistakes-i-hit-along-the-way)
-9. [What comes next](#9-what-comes-next)
+7. [Seeing backprop happen](#7-seeing-backprop-happen-demo_gradientspy)
+8. [Experiments: normalization and learning rate](#8-experiments-normalization-and-learning-rate)
+9. [Mistakes I hit along the way](#9-mistakes-i-hit-along-the-way)
+10. [What comes next](#10-what-comes-next)
 
 ---
 
@@ -68,6 +69,8 @@ Image files go in, class scores come out, and then the training loop uses those 
 | **Optimizer** | The rule that uses the gradients to update the weights (here, SGD). |
 | **Learning rate (`lr`)** | The step size of each weight update. |
 | **Seed** | A fixed starting point for the random number generator, so a run can be repeated exactly. |
+| **Gradient norm** | One number summarizing how large a layer's gradients are: the square root of the sum of squares of all its gradient entries. |
+| **Dead ReLU** | A hidden neuron whose output is 0 for every input in a batch. It passes no gradient back, so its incoming weights don't change that step. |
 | **`nn.Module`** | PyTorch's base class for anything with learnable parameters. |
 
 ### Why batches?
@@ -301,7 +304,7 @@ Each weight moves a small step *against* its gradient, downhill on the loss. `lr
 
 **The learning rate is a trade-off:**
 - **Too small:** the loss falls slowly and needs many epochs.
-- **Too large:** a step can overshoot a good region, and the loss jumps back up. Section 7 has a real example.
+- **Too large:** a step can overshoot a good region, and the loss jumps back up. Section 8 has a real example.
 
 ### 6.5 Smaller points
 
@@ -313,7 +316,215 @@ Each weight moves a small step *against* its gradient, downhill on the loss. `lr
 
 ---
 
-## 7. Experiments: normalization and learning rate
+## 7. Seeing backprop happen (`demo_gradients.py`)
+
+`train.py` runs backpropagation thousands of times without showing anything. This script runs it **once**, on one batch, and prints evidence at each stage.
+
+### 7.1 What it proves
+
+| Claim | Evidence printed |
+|-------|------------------|
+| Gradients don't exist until `backward()` runs | `.grad` is `None` before the backward pass |
+| `backward()` fills in a gradient for every parameter, including the first layer | A non-zero gradient norm for each parameter, `fc1` included |
+| The update rule is `w ← w − lr × grad` | The actual change of one weight, next to `-lr * grad` |
+| The update moves the weights in the direction that lowers the loss | The loss on the same batch before and after the step |
+
+### 7.2 The script, piece by piece
+
+**Before the backward pass**
+
+```python
+optimizer.zero_grad()
+print(net.fc4.weight.grad)   # None
+```
+
+`zero_grad()` clears the gradients. In PyTorch 2.0 and later it sets them to `None` instead of zeros by default. On a brand-new network no gradient has ever been computed, so `.grad` is `None` anyway. Either way, it shows that no gradient exists before `backward()`.
+
+**Forward, loss, backward**
+
+```python
+outputs = net(images)
+initial_loss = criterion(outputs, labels)
+initial_loss.backward()
+```
+
+Steps 2 to 4 of the training loop. After `backward()`, every parameter has a `.grad` with the same shape as the parameter itself.
+
+**Choosing which weight to watch**
+
+```python
+grad_abs = net.fc4.weight.grad.abs()
+max_idx = divmod(torch.argmax(grad_abs).item(), grad_abs.shape[1])
+```
+
+- `.abs()` takes the absolute value of each gradient entry, since only the size matters for "which is largest".
+- `torch.argmax(...)` returns the position of the largest entry as an index into the **flattened** tensor. `fc4.weight` has 10×10 = 100 entries, so that is a number from 0 to 99. `.item()` turns it into a plain Python int.
+- `divmod(a, b)` returns `(a // b, a % b)`. With the flat index and the number of columns (`grad_abs.shape[1]`), that is exactly (row, column). For example, flat index 37 with 10 columns gives `(3, 7)`.
+- `max_idx` is then a tuple of two ints, which prints readably and can index the weight directly: `weight[max_idx]`.
+- `torch.unravel_index(flat, shape)` does the same job (PyTorch 2.2 and newer), but it returns a tuple of tensors, which prints less readably. `divmod` works on every version.
+- `fc4.weight` has shape `(10, 10)`. `nn.Linear(10, num_classes)` stores its weights as (outputs, inputs), so the row is the output class and the column is the hidden neuron feeding it.
+
+**Why the largest gradient, not a fixed index like `[0, 0]`:** ReLU can output 0 for a hidden neuron on every image in a batch. Such a "dead" neuron passes no gradient back, so the weights attached to it get a gradient of exactly 0 and don't change that step. A fixed index might land on one, and the demo would look like nothing happened.
+
+**Reading the weight and its gradient**
+
+```python
+grad_val = net.fc4.weight.grad[max_idx].item()
+initial_weight = net.fc4.weight[max_idx].item()
+```
+
+- `.item()` turns a one-value tensor into a plain Python float.
+- **Copy the weight's value before the step.** The optimizer changes weights in place, so a stored reference would show the new value afterwards. A float is a snapshot.
+- **Read the gradient from the parameter**, `net.fc4.weight.grad[...]`. Indexing the parameter first (`w = net.fc4.weight[0, 0]`, then `w.grad`) gives `None`: indexing creates a new tensor derived from the parameter, and the gradient is stored on the parameter itself, not on that derived tensor.
+
+**Gradient norms across the layers**
+
+```python
+for name, param in net.named_parameters():
+    if param.grad is not None:
+        print(name, param.grad.norm().item())
+```
+
+- `named_parameters()` yields `(name, parameter)` pairs: `fc1.weight`, `fc1.bias`, and so on up to `fc4.bias`, eight in total.
+- `grad.norm()` is the square root of the sum of the squares of all the gradient entries: one number summarizing how big that gradient is.
+- **A non-zero norm on `fc1` is the real evidence of backprop.** `fc1` is the layer furthest from the loss, so its gradient had to travel back through `fc4`, `fc3` and `fc2` first.
+- Compare "is it non-zero", not "which is bigger". A norm grows with the number of entries, so layers of different sizes aren't directly comparable.
+- `if param.grad is not None` guards against a parameter that took no part in the loss.
+
+**The update and the check**
+
+```python
+optimizer.step()
+updated_weight = net.fc4.weight[max_idx].item()
+actual_change = updated_weight - initial_weight
+expected_change = -lr * grad_val
+math.isclose(actual_change, expected_change, abs_tol=1e-7)
+```
+
+- SGD sets `w ← w − lr × grad`, so the change should be exactly `−lr × grad`.
+- Weights are float32, which holds about 7 significant digits, so the two numbers can differ in the last few digits. Comparing with `==` would be unreliable.
+- `math.isclose` uses a relative tolerance by default, which is useless for numbers near 0. `abs_tol` supplies a fixed tolerance for that case.
+
+**Loss before and after**
+
+```python
+with torch.no_grad():
+    updated_loss = criterion(net(images), labels)
+```
+
+- `torch.no_grad()` switches off gradient recording inside the block, so no computation graph is built. Use it whenever you only want a value, such as for evaluation.
+- One step with a small learning rate normally lowers the loss on the same batch, but a single step isn't guaranteed to.
+
+### 7.3 Small details
+
+- `:.3e` is scientific notation (`1.234e-03`). Fixed decimals like `:.6f` can print a tiny number as `0.000000`.
+- `torch.manual_seed(42)` fixes the initial weights and the shuffle order, so the printout is identical on every run.
+- `net: nn.Module` and `images: torch.Tensor` are type hints. They are documentation, and PyTorch doesn't enforce them.
+- `train_loader, _, classes = get_loaders()`: `_` is the convention for a value you don't use.
+- An f-string with no `{}` inside doesn't need the `f`.
+- The network's sizes come from `IMAGE_SIZE * IMAGE_SIZE` and `len(classes)`, as in `train.py`. That means `IMAGE_SIZE` has to stay imported.
+- The script changes the network by one step. It is a demo, not part of training.
+- The docstring says *what* the function does in one sentence. The comments say *why* (for example, "largest gradient, so a dead ReLU doesn't hide the update") and don't repeat what the code already says.
+- A leading `\n` inside a printed string, as in `print("\n--- ... ---")`, prints a blank line first, which separates the sections of the output.
+
+### 7.4 "One step updates all the weights": check it, don't assume it
+
+`optimizer.step()` updates every parameter that has a gradient, not only the one being watched. But "all" is too strong: weights behind a dead ReLU have a gradient of exactly 0 and don't move. So the script counts instead of claiming:
+
+```python
+params_before = {name: param.detach().clone() for name, param in net.named_parameters()}
+
+optimizer.step()
+
+changed_params_count = 0
+total_params_count = 0
+for name, param in net.named_parameters():
+    diff = param - params_before[name]
+    changed_params_count += (diff != 0).sum().item()
+    total_params_count += param.numel()
+```
+
+- The dictionary comprehension `{key: value for ...}` stores each parameter's snapshot under its name (`fc1.weight`, ...), so the same name finds it again after the step.
+- `.detach()` cuts a tensor off from the computation graph.
+- `.clone()` makes an independent copy. Without it, the snapshot would share memory with the parameter and change along with it, so every difference would be 0.
+- `param - params_before[name]` is the element-wise difference, with the same shape as the parameter. `(diff != 0)` is a True/False tensor, `.sum()` counts the Trues, and `.item()` turns the count into a plain number.
+- `param.numel()` is the number of entries in a tensor. Biases count too, so these are "parameter entries", not just weights.
+- **The total for this network is 4340:** `fc1` has 400×10 + 10 = 4010 entries, and `fc2`, `fc3` and `fc4` have 10×10 + 10 = 110 each.
+
+**Caveats**
+
+- **Float32 rounding:** if `lr × grad` is far smaller than the weight itself (roughly below 1e-7 of it), adding it changes nothing, so the count of changed entries can fall slightly below the count of non-zero gradients. For an exact count of non-zero gradients, count `(param.grad != 0).sum()` as well and compare the two.
+- **The count may come out close to the total or well below it.** Either result is informative: well below means some hidden neurons were dead for the whole batch.
+- `param - params_before[name]` builds a small computation graph, because `param` requires gradients. That is harmless here. Using `param.detach()` or wrapping the loop in `torch.no_grad()` avoids it.
+
+### 7.5 What a good run looks like
+
+- `.grad` prints `None` before `backward()`.
+- Every parameter has a non-zero gradient norm, `fc1` included. If a whole layer's norm is exactly 0, nothing flowed back, which points to a bug such as a detached tensor.
+- The actual change equals `-lr * grad` to within rounding, and `isclose` prints `True`.
+- The loss after the step is slightly lower than before.
+- The final note reports how many parameter entries changed out of 4340.
+
+### 7.6 My run (seed 42, `lr = 0.01`, one batch of 32)
+
+```
+Gradient before backward(): None
+
+--- Weight Update Demonstration ---
+Initial Loss: 2.303889
+Selected Weight Index: (0, 6)
+Initial Weight: -8.424e-02
+Gradient: -4.399e-02
+
+--- Gradient Norms Across Layers ---
+Layer 'fc1.weight' Gradient Norm: 1.252e-01
+Layer 'fc1.bias' Gradient Norm: 7.987e-03
+Layer 'fc2.weight' Gradient Norm: 1.793e-02
+Layer 'fc2.bias' Gradient Norm: 1.750e-02
+Layer 'fc3.weight' Gradient Norm: 3.245e-02
+Layer 'fc3.bias' Gradient Norm: 5.082e-02
+Layer 'fc4.weight' Gradient Norm: 9.480e-02
+Layer 'fc4.bias' Gradient Norm: 2.342e-01
+
+--- Post-Step Verification ---
+Updated Weight: -8.380e-02
+Actual Change: 4.399e-04
+Expected Change (-lr * grad): 4.399e-04
+Matches Expected Update (within tolerance): True
+
+Loss Before Step: 2.303889
+Loss After Step: 2.303051
+
+Note: The optimizer step updated 4166 out of 4340 parameter entries (weights with non-zero gradients).
+```
+
+**Reading it**
+
+| Line | What it shows |
+|------|---------------|
+| `Gradient before backward(): None` | No gradient exists until `backward()` runs. |
+| `Initial Loss: 2.303889` | Very close to `ln(10) = 2.3026`, the loss of a network guessing among 10 classes. Expected for random starting weights. |
+| `Selected Weight Index: (0, 6)` | The entry of `fc4.weight` with the largest gradient: row 0 (output class 0, `Apple 20`), column 6 (hidden neuron 6). |
+| `Gradient: -4.399e-02` | Negative, so raising this weight would lower the loss. |
+| Eight non-zero norms | The gradient reached every layer, including `fc1`, the one furthest from the loss. |
+| `Updated Weight: -8.380e-02` | The weight went from -0.08424 to -0.08380. It **increased**, against the sign of its negative gradient. |
+| `Actual Change` = `Expected Change` | 4.399e-04 = −0.01 × (−4.399e-02). The update rule `w ← w − lr × grad` holds. |
+| Loss 2.303889 → 2.303051 | The loss on the same batch fell by about 8.4e-4. |
+
+**A check on the size of the loss drop**
+
+For a small step, the loss should fall by about `lr × (sum of the squared gradients)`. The step moves every parameter by `−lr × grad`, and to first order the loss changes by the gradient multiplied by that movement. Squaring the eight printed norms and adding them gives 0.01568 + 0.00006 + 0.00032 + 0.00031 + 0.00105 + 0.00258 + 0.00899 + 0.05485 = 0.08384. Times `lr = 0.01`, that is 8.38e-4, which matches the observed drop (2.303889 − 2.303051 = 8.38e-4).
+
+This only works because the step is small. For a large learning rate the loss surface curves enough that the first-order estimate fails, and the loss can go up instead of down. That is the same overshoot idea as the bumps in section 8.
+
+**Things to be careful about**
+
+- **Don't compare norms across layers.** `fc1.weight` has 4000 entries and `fc2.weight` has 100, so a larger norm for `fc1.weight` says little by itself.
+- **4166 of 4340 entries changed, so 174 did not.** The script's note blames zero gradients, but the output doesn't prove that. One deduction is possible: a hidden neuron in `fc1` that was dead for the whole batch would leave 411 entries unchanged (its 400 weights, its bias and the 10 weights leaving it), which is more than 174. So no `fc1` neuron was fully dead. To find the real cause, print for each parameter how many entries have `grad == 0` and how many did not change, and compare the two.
+
+---
+
+## 8. Experiments: normalization and learning rate
 
 Four runs of 20 epochs, changing one setting at a time:
 
@@ -339,7 +550,7 @@ Four runs of 20 epochs, changing one setting at a time:
 
 ---
 
-## 8. Mistakes I hit along the way
+## 9. Mistakes I hit along the way
 
 | Mistake | What goes wrong | Fix |
 |---------|-----------------|-----|
@@ -355,12 +566,14 @@ Four runs of 20 epochs, changing one setting at a time:
 | `import model` plus a `model` parameter | The parameter shadows the module, which leads to confusing errors. | Name the parameter `net`. |
 | `m = model(images)` | Calls a module as a function, and would overwrite the network. | Call the network instance, not the module. |
 | Calling `train(...)` twice | Trains the network a second time and prints the wrong list. | Keep `losses = train(...)` and print `losses`. |
+| `model.Net()` | The class is `FruitNetwork`, so a wrong name raises `AttributeError`, and leaving out its two size arguments raises `TypeError`. | Use the real class name and pass `input_size` and `num_classes`. |
+| Reading `.grad` from an indexed parameter, as in `net.fc4.weight[0, 0].grad` | Indexing makes a new tensor, and gradients live on the parameter itself, so the result is `None`. | Index the gradient instead: `net.fc4.weight.grad[0, 0]`. |
 
 ---
 
-## 9. What comes next
+## 10. What comes next
 
-- **Gradient demo:** print one weight, its `.grad`, and the weight after `optimizer.step()`, to show backprop and the update rule in action.
+- **Record the demo output:** run `demo_gradients.py` and paste its printout into section 7 here and into the README's Results section.
 - **Loss curve plot:** matplotlib figure of the epoch losses, ideally with all four experiment runs overlaid.
 - **Evaluation:** accuracy on the held-out test images, with the network in eval mode and gradients turned off.
 - **Loss surface plot (optional):** save the weights each epoch, project them to 2D with PCA, and draw the loss landscape with the training path on top.
