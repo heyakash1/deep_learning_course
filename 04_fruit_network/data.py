@@ -6,14 +6,19 @@ IMAGE_SIZE = 20
 BATCH_SIZE = 32
 
 
-def get_loaders(data_dir: str = "data", batch_size: int = BATCH_SIZE) -> tuple:
-    transform = transforms.Compose([
-        transforms.Resize((IMAGE_SIZE,IMAGE_SIZE)),
+def get_loaders(data_dir: str = "data", batch_size: int = BATCH_SIZE, normalize: bool = True) -> tuple:
+    """
+    Builds the train and test DataLoaders.
+    returns: (train_loader, test_loader, class_names)
+    """
+    steps = [
+        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
         transforms.Grayscale(num_output_channels=1),
-        # convert to a tensor
         transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
+    ]
+    if normalize:
+        steps.append(transforms.Normalize((0.5,), (0.5,)))
+    transform = transforms.Compose(steps)
 
     train_data = datasets.ImageFolder(os.path.join(data_dir, "train"), transform=transform)
     test_data = datasets.ImageFolder(os.path.join(data_dir, "test"), transform=transform)
@@ -21,7 +26,8 @@ def get_loaders(data_dir: str = "data", batch_size: int = BATCH_SIZE) -> tuple:
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=batch_size)
 
-    return (train_loader,test_loader,train_data.classes)
+    return (train_loader, test_loader, train_data.classes)
+
 
 if __name__ == "__main__":
     train_loader, test_loader, classes = get_loaders()
