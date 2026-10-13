@@ -6,6 +6,10 @@ IMAGE_SIZE = 20
 
 
 def make_toy_data(n: int = 300, seed: int = 0) -> np.ndarray:
+    """
+    Correlated 2D data: an elongated cloud, tilted and shifted away from the origin.
+    returns: array of shape (n, 2)
+    """
     rng = np.random.default_rng(seed)
 
     x = rng.normal(0, 3.0, size = (n, 1))
@@ -28,6 +32,10 @@ def make_toy_data(n: int = 300, seed: int = 0) -> np.ndarray:
 
 
 def load_fruit_vectors(split: str = "train", data_dir: str = "../04_fruit_network/data") -> tuple:
+    """
+    Reads every image of one split as a flat vector of IMAGE_SIZE * IMAGE_SIZE pixels.
+    returns: (X of shape (n_images, 400), labels of shape (n_images,), class_names)
+    """
     split_dir = os.path.join(data_dir, split)
 
     class_names = sorted([d for d in os.listdir(split_dir) if os.path.isdir(os.path.join(split_dir,d))])
